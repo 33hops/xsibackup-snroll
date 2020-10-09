@@ -12,21 +12,9 @@ in the VM will be deleted if the predefined number of snapshots to keep is reach
 This tool is of special interest to test engineers that need to keep multiple states 
 of a given VM. It can also be used to keep multiple restore points per backup.
 
-----------------------------------------------------------------------
-(c)33HOPS Snapshot Roll 1.0.0.0
-----------------------------------------------------------------------
+Download the xsibackup-snroll file, give it execute permissions and run the following 
+command to get the help on acreen.
 
-  Usage:
+./xsibackup-snroll --help
 
-  ./xsibackup-snroll <VM Name> <Num of Snapshots> <Quiesce> <Include memory>
-
-  VM Name:              Name of VM as seen with 'vim-cmd vmsvc/getallvms'
-  Num of Snapshots:     Number of snapshots to rotate
-  Quiesce:              Boolean, acepts 0|1, yes|no, true|false
-                        Sets whether the snapshot will be quiesced
-                        Quiescing is not a trivial task, you must
-                        make sure VMWare Tools are installed and
-                        all required services properly configured
-  Include memory:       Boolean, acepts 0|1, yes|no, true|false
-                        Includes the guest's memory in the snapshot
 
