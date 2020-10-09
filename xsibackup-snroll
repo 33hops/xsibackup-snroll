@@ -1,0 +1,213 @@
+#!/bin/sh
+{
+#################################################################################
+#                                                                               #
+#    XSIBACKUP Automated Backups for ESXi 5.1, 5.5, 6.0 & 6.5                   #
+#    By Daniel J. Garcia Fidalgo (33hops.com) daniel.garcia@33hops.com          #
+#    Copyright (C) 2013-2017 | 33HOPS, Sistemas de Informacion y Redes, S.L.    #
+#                                                                               #
+#    RELEASED UNDER 33HOPS PUBLIC DOMAIN LICENSE                                #
+#    You may use this software however you want: modify, include it in other    #
+#    works, resell it, etc..., both for private and commercial use, just as     #
+#    long as you keep this header acknowledging its creation                    #
+#                                                                               #
+#################################################################################
+
+esxcli storage filesystem rescan
+sync
+ulimit -s 512
+ME="$(basename "$0")"
+VER="1.0.0.0"
+
+# Functions
+
+printHeader(){
+    printf "%s\n" "----------------------------------------------------------------------"
+    printf "%-70.70s\n" "(c)33HOPS Snapshot Roll $VER"	
+    printf "%s\n" "----------------------------------------------------------------------"
+    printf "\n"
+}
+
+printHelp(){
+    printHeader
+    printf "  %-10.10s\n\n" "Usage:"	
+    printf "  %-80.80s\n" "./${ME} <VM Name> <Num of Snapshots> <Quiesce> <Include memory>"	
+    printf "\n"
+    printf "  %-20.20s" "VM Name:"
+    printf "  %-50.50s\n" "Name of VM as seen with 'vim-cmd vmsvc/getallvms'"
+    printf "  %-20.20s" "Num of Snapshots:"
+    printf "  %-50.50s\n" "Number of snapshots to rotate"
+    printf "  %-20.20s" "Quiesce:"
+    printf "  %-50.50s\n" "Boolean, acepts 0|1, yes|no, true|false"
+    printf "  %-70.70s\n" "                      Sets whether the snapshot will be quiesced"
+    printf "  %-70.70s\n" "                      Quiescing is not a trivial task, you must"
+    printf "  %-70.70s\n" "                      make sure VMWare Tools are installed and"
+    printf "  %-70.70s\n" "                      all required services properly configured"
+    printf "  %-20.20s" "Include memory:"
+    printf "  %-50.50s\n" "Boolean, acepts 0|1, yes|no, true|false"
+    printf "  %-70.70s\n" "                      Includes the guest's memory in the snapshot"
+    printf "\n"
+}
+
+getDate(){
+    echo "$( date +%Y-%m-%dT%H:%M:%S )"	
+}
+
+isNumeric(){
+    if [ "$1" -eq "$1" ] 2>/dev/null;then echo 1;else echo 0;fi
+}
+
+if [ "${#@}" -lt "3" -o "$1" == "" -o "$1" == "--help" ]
+then
+    printHelp
+    exit 0	
+fi
+
+if [ "${#1}" -eq "0" ]
+then
+    echo "$(getDate) | Error: pass a VM name as the first argument"
+    exit 1		
+fi
+
+if [ "${#2}" -eq "0" ]
+then
+    echo "$(getDate) | Error: set the number of snapshots as the second argument"
+    exit 1
+fi
+
+if [ "$( isNumeric ${2} )" -eq "0" ]
+then
+    echo "$(getDate) | Error: number of snapshots must be a numeric value as second argument"
+    exit 1
+fi
+
+quiesce=0
+if [ "${#3}" -gt "0" ]
+then
+    if [ "$( isNumeric ${3} )" -eq "0" ]
+    then
+	quiesce="$( echo "${3}" | awk '{print tolower($0)}' )"
+	if [ "${quiesce}" == "yes" -o "${quiesce}" == "true" ]
+	then
+	    quiesce=1
+	elif [ "${quiesce}" == "no" -o "${quiesce}" == "false" ]
+	then
+	    quiesce=0
+	else
+	    echo "$(getDate) | Error: third optional argument must be 0 or 1"
+            exit 1
+	fi
+    else
+	quiesce=${3}
+    fi
+fi
+
+incmem=0
+if [ "${#4}" -gt "0" ]
+then
+    if [ "$( isNumeric ${4} )" -eq "0" ]
+    then
+        incmem="$( echo "${4}" | awk '{print tolower($0)}' )"
+        if [ "${incmem}" == "yes" -o "${incmem}" == "true" ]
+        then
+            incmem=1
+        elif [ "${incmem}" == "no" -o "${incmem}" == "false" ]
+	then
+	    incmem=0
+	else
+            echo "$(getDate) | Error: fourth optional argument must be 0 or 1"
+            exit 1
+        fi
+    else
+        incmem=${4}
+    fi
+fi
+
+VMName="${1}"
+VMId="$( vim-cmd vmsvc/getallvms | tail -n+2 | awk -F '[' '{print $1}' | sed -e 's/^ *//g' -e 's/ *$//g' | grep -E "^[0-9]{1,5}.*$VMName$" | awk '{print $1}' )"
+
+if [ "$( isNumeric "$VMId" )" -ne "1" ]
+then
+    echo "$(getDate) | Error: could not find any VM by $VMName"
+    exit 2	
+fi
+
+echo "$(getDate) | -- BEGIN SNAPSHOT ROTATION --"
+echo "$(getDate) | VM Id: $VMId"
+
+vmInventory="/etc/vmware/hostd/vmInventory.xml"
+vmxFound=0
+while IFS= read -r line
+do
+    line="$( echo ${line} | sed -e 's/^ *//g' -e 's/ *$//g' )"
+    if [ "$line" == "<objID>${VMId}</objID>" ]
+    then	
+    	while [ "$vmxFound" -eq "0" ]
+	do
+	    read -r line
+	    if [ "${line:0:12}" == "<vmxCfgPath>" ]
+	    then
+		vmxFound=1
+	    fi		    	
+	done    
+	vmxCfgPath="$line"
+	break
+    fi	
+done < "$vmInventory"
+
+vmxCfgPath="$( echo "$vmxCfgPath" | sed 's/<vmxCfgPath>//g' )"
+vmxCfgPath="$( echo "$vmxCfgPath" | sed 's/<\/vmxCfgPath>//g' )"
+
+vmsdCfgPath="${vmxCfgPath/\.vmx/.vmsd}"
+
+echo "$(getDate) | vmxCfgPath: $vmxCfgPath"
+echo "$(getDate) | vmsdCfgPath: $vmsdCfgPath"
+
+
+numSnapshots="$( cat "$vmsdCfgPath" | grep -E "^snapshot[0-9]{1,5}.uid" | wc -l )"
+echo "$(getDate) | Number of snapshots ($numSnapshots) below configured number ($2)"	
+if [ "$incmem" -eq "1" ]
+then
+    echo "$(getDate) | Snapshot will include memory"
+fi
+if [ "$quiesce" -eq "1" ]
+then
+    echo "$(getDate) | Snapshot will be quiesced"
+    echo "$(getDate) | /!\\ Please, make sure that (c)VMWare Tools are installed and all services are correctly configured"
+fi
+echo "$(getDate) | Creating snapshot, please wait..."
+createSnapshot="$( vim-cmd vmsvc/snapshot.create ${VMId} "33hops_snapshot_$(date +%s%N)" "Automatically generated 33hops_snapshot_$(date +%s%N)" ${incmem} ${quiesce} )"
+if [ "$createSnapshot" != "Create Snapshot:" -o "$?" -ne "0" ]
+then
+    echo "$(getDate) | Error: could not create snapshot for VM <$VMName> ($VMId)"
+    echo "$(getDate) | Details: $createSnapshot"
+    exit 3	
+else
+    lastSnapshot="$( cat "$vmsdCfgPath" | grep -E "^snapshot[0-9]{1,5}.uid" | sort -r | head -n1 | awk -F '=' '{gsub(" ", "");gsub("\"", "");print $2}' )"
+    echo "$(getDate) | Snapshot ${lastSnapshot} was successfully created"
+    numSnapshots="$( cat "$vmsdCfgPath" | grep -E "^snapshot[0-9]{1,5}.uid" | wc -l )"
+fi
+
+if [ "$numSnapshots" -gt "$2" ]
+then
+    while [ "$numSnapshots" -gt "$2" ]
+    do
+	firstSnapshot="$( cat "$vmsdCfgPath" | grep -E "^snapshot[0-9]{1,5}.uid" | sort | head -n1 | awk -F '=' '{gsub(" ", "");gsub("\"", "");print $2}' )"
+        echo "$(getDate) | Removing snapshot ${firstSnapshot}"
+	removSnapshot="$( vim-cmd vmsvc/snapshot.remove ${VMId} ${firstSnapshot} | head -n1 )"
+        if [ "$removSnapshot" != "Remove Snapshot:" -o "$?" -ne "0" ]
+        then
+            echo "$(getDate) | Error: could not delete snapshot for VM <$VMName> ($VMId)"
+	    echo "$(getDate) | Details: $removSnapshot"
+	    exit 4	
+        else
+	    echo "$(getDate) | Snapshot ${firstSnapshot} was successfully removed"
+	fi
+	numSnapshots="$( cat "$vmsdCfgPath" | grep -E "^snapshot[0-9]{1,5}.uid" | wc -l )"	
+    done	
+fi
+
+echo "$(getDate) | Number of Snapshots is: $numSnapshots"
+echo "$(getDate) | -- END SNAPSHOT ROTATION --"
+exit 0
+}
