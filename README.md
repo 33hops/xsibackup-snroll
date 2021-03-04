@@ -14,7 +14,7 @@ This tool is of special interest to test engineers that need to keep multiple st
 of a given VM. It can also be used to keep multiple restore points per backup.
 
 Download the xsibackup-snroll file, give it execute permissions and run the following 
-command to get the help on acreen.
+command to get the help on screen.
 
 ./xsibackup-snroll --help
 
